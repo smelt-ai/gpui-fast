@@ -81,7 +81,9 @@ export function prepare(config: ReleaseConfig, version: string, dest = DEST): vo
   for (const name of config.crates) {
     const source = resolve(ROOT, "crates", name);
     const target = resolve(dest, name);
-    cpSync(source, target, { recursive: true });
+    // Dereference: the crates link `LICENSE-APACHE` to the repository root,
+    // which a copied link would point at on the preparing machine.
+    cpSync(source, target, { recursive: true, dereference: true });
     const manifest = readToml(resolve(source, "Cargo.toml"));
     const pkg = manifest.package;
     Object.assign(pkg, {
