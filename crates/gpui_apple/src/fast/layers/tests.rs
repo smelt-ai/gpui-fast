@@ -1473,5 +1473,109 @@ fn cached_layer_multi_tile_partial_update_rasterizes_only_dirty_tile(
     assert_same_pixels(&actual2, &expected2, size_dp.width.0 as usize);
 }
 
+/// A window may draw frames its renderer never renders (no drawable while
+/// the window is in the background, or a frame drawn outside the display
+/// link's update). A cached layer repainted in such a frame must still show
+/// its new content once a later frame is rendered: the dirty tiles belong to
+/// the generation, not to the frame that made it.
+#[gpui::test]
+fn cached_layer_repainted_in_an_unrendered_frame_shows_its_new_content(
+    cx: &mut gpui::TestAppContext,
+) {
+    use gpui::{
+        AppContext as _, CachedLayerId, CachedLayerOptions, IntoElement as _, ParentElement as _,
+        Styled as _, canvas, div, fill,
+    };
+    use std::cell::Cell;
+
+    let logical_size = size(px(240.), px(160.));
+    let paint = |window: &mut gpui::Window, bounds: Bounds<gpui::Pixels>, color: Hsla| {
+        window.paint_quad(fill(
+            Bounds::new(
+                bounds.origin + point(px(20.), px(20.)),
+                size(px(120.), px(80.)),
+            ),
+            color,
+        ));
+    };
+    let direct = |color: Hsla| {
+        move |_: &mut gpui::Window, _: &mut gpui::App| {
+            div()
+                .size_full()
+                .bg(gpui::white())
+                .child(
+                    canvas(
+                        |_, _, _| (),
+                        move |bounds, (), window, _| paint(window, bounds, color),
+                    )
+                    .size_full(),
+                )
+                .into_any_element()
+        }
+    };
+
+    // `revisions` lists the revision of each frame and whether it is
+    // rendered; the content is blue at revision 1 and green after.
+    for (what, revisions) in [
+        ("reused", [(1u64, true), (2, false), (2, true)]),
+        (
+            "identically repainted",
+            [(1u64, true), (2, false), (3, true)],
+        ),
+    ] {
+        let mut harness = Harness::new().expect("Metal device required");
+        let (_, green, size_dp) =
+            render_window_fixture(cx, &mut harness, logical_size, direct(Hsla::green()));
+        let mut harness = Harness::new().expect("Metal device required");
+        let rev = Rc::new(Cell::new(revisions[0].0));
+        let rev_ref = rev.clone();
+        let (handle, _, _) = render_window_fixture(cx, &mut harness, logical_size, move |_, _| {
+            let r = rev_ref.get();
+            div()
+                .size_full()
+                .bg(gpui::white())
+                .child(
+                    canvas(
+                        |_, _, _| (),
+                        move |bounds, (), window, _| {
+                            window.paint_cached_layer(
+                                CachedLayerId::new(5),
+                                bounds,
+                                r,
+                                CachedLayerOptions::default().background(gpui::white()),
+                                |window| {
+                                    let color = if r == 1 { Hsla::blue() } else { Hsla::green() };
+                                    paint(window, bounds, color);
+                                },
+                            );
+                        },
+                    )
+                    .size_full(),
+                )
+                .into_any_element()
+        });
+        let mut last: Option<Vec<u8>> = None;
+        for &(revision, rendered) in &revisions[1..] {
+            rev.set(revision);
+            last = cx
+                .update_window(handle, |_, window, cx| {
+                    window.refresh();
+                    window.draw(cx).clear(cx);
+                    rendered.then(|| harness.render(window.painted_scene(), size_dp))
+                })
+                .unwrap();
+        }
+        let actual = last.expect("the last frame is rendered");
+        let width = size_dp.width.0 as usize;
+        let at = (40.0 * size_dp.width.0 as f32 / 240.0) as usize;
+        assert_eq!(
+            pixel(&actual, width, at, at),
+            pixel(&green, width, at, at),
+            "{what}: the layer still shows what it held before the unrendered frame"
+        );
+        assert_same_pixels(&actual, &green, width);
+    }
+}
+
 #[path = "../../../../gpui_linux/src/fast/composition/occluders.rs"]
 mod x11_occluder_tests;

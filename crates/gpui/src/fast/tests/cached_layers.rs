@@ -53,7 +53,9 @@ fn draw_window<V: 'static>(cx: &mut crate::TestAppContext, handle: crate::Window
 }
 
 #[crate::test]
-fn cached_layer_revision_hit_reuses_content_and_clears_dirty_tiles(cx: &mut crate::TestAppContext) {
+fn cached_layer_revision_hit_reuses_content_and_keeps_its_dirty_tiles(
+    cx: &mut crate::TestAppContext,
+) {
     if !crate::fast::layers::COMPILED {
         return;
     }
@@ -74,16 +76,18 @@ fn cached_layer_revision_hit_reuses_content_and_clears_dirty_tiles(cx: &mut crat
 
     draw_window(cx, handle);
     assert_eq!(paints.get(), 1);
-    let gen1 = handle
+    let (gen1, dirty1) = handle
         .update(cx, |_, window, _| {
             let frames = &window.rendered_frame.scene.layers.frames;
             assert_eq!(frames.len(), 1);
             assert!(!frames[0].dirty_tiles.is_empty());
-            frames[0].generation
+            (frames[0].generation, frames[0].dirty_tiles.clone())
         })
         .unwrap();
 
-    // Redraw with unchanged revision: `paint` closure stays skipped, dirty_tiles cleared.
+    // Redraw with unchanged revision: `paint` closure stays skipped, and the
+    // frame describes the same generation with the same dirty tiles (the
+    // renderer may not have rendered the frame that made it).
     handle.update(cx, |_, _, cx| cx.notify()).unwrap();
     draw_window(cx, handle);
     assert_eq!(paints.get(), 1);
@@ -92,7 +96,7 @@ fn cached_layer_revision_hit_reuses_content_and_clears_dirty_tiles(cx: &mut crat
             let frames = &window.rendered_frame.scene.layers.frames;
             assert_eq!(frames.len(), 1);
             assert_eq!(frames[0].generation, gen1);
-            assert!(frames[0].dirty_tiles.is_empty());
+            assert_eq!(frames[0].dirty_tiles, dirty1);
         })
         .unwrap();
 
@@ -220,9 +224,10 @@ fn cached_layer_identical_repaint_keeps_generation(cx: &mut crate::TestAppContex
     });
 
     draw_window(cx, handle);
-    let gen1 = handle
+    let (gen1, dirty1) = handle
         .update(cx, |_, window, _| {
-            window.rendered_frame.scene.layers.frames[0].generation
+            let frame = &window.rendered_frame.scene.layers.frames[0];
+            (frame.generation, frame.dirty_tiles.clone())
         })
         .unwrap();
 
@@ -239,7 +244,7 @@ fn cached_layer_identical_repaint_keeps_generation(cx: &mut crate::TestAppContex
             let frames = &window.rendered_frame.scene.layers.frames;
             assert_eq!(frames.len(), 1);
             assert_eq!(frames[0].generation, gen1);
-            assert!(frames[0].dirty_tiles.is_empty());
+            assert_eq!(frames[0].dirty_tiles, dirty1);
         })
         .unwrap();
 }
