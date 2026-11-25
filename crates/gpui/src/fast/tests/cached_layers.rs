@@ -30,7 +30,7 @@ impl Render for CachedCanvasView {
                     entity.update(cx, |this, cx| {
                         let entity_bounds = this.bounds;
                         window.paint_cached_layer(
-                            CachedLayerId(1),
+                            CachedLayerId::new(1),
                             bounds.union(&entity_bounds),
                             revision,
                             options,
@@ -264,7 +264,7 @@ fn cached_layer_translation_and_offset_without_repaint(cx: &mut crate::TestAppCo
                     |_, _, _| (),
                     move |_, (), window, _| {
                         window.paint_cached_layer(
-                            CachedLayerId(7),
+                            CachedLayerId::new(7),
                             bounds,
                             1,
                             CachedLayerOptions::default()
@@ -393,7 +393,7 @@ fn cached_layer_remove_and_ttl_eviction(cx: &mut crate::TestAppContext) {
                     move |_, (), window, _| {
                         let bounds = Bounds::new(point(px(10.), px(10.)), size(px(80.), px(80.)));
                         window.paint_cached_layer(
-                            CachedLayerId(1),
+                            CachedLayerId::new(1),
                             bounds,
                             1,
                             CachedLayerOptions::default(),
@@ -403,7 +403,7 @@ fn cached_layer_remove_and_ttl_eviction(cx: &mut crate::TestAppContext) {
                         );
                         if paint_second {
                             window.paint_cached_layer(
-                                CachedLayerId(2),
+                                CachedLayerId::new(2),
                                 bounds,
                                 1,
                                 CachedLayerOptions::default(),
@@ -428,29 +428,29 @@ fn cached_layer_remove_and_ttl_eviction(cx: &mut crate::TestAppContext) {
                     .fast_layers
                     .cached
                     .entries
-                    .contains_key(&CachedLayerId(1))
+                    .contains_key(&CachedLayerId::new(1))
             );
             assert!(
                 window
                     .fast_layers
                     .cached
                     .entries
-                    .contains_key(&CachedLayerId(2))
+                    .contains_key(&CachedLayerId::new(2))
             );
-            window.fast_layers.cached.entries[&CachedLayerId(1)].key
+            window.fast_layers.cached.entries[&CachedLayerId::new(1)].key
         })
         .unwrap();
 
     // Explicit removal clears immediately; next paint allocates a fresh LayerKey.
     handle
         .update(cx, |view, window, cx| {
-            window.remove_cached_layer(CachedLayerId(1));
+            window.remove_cached_layer(CachedLayerId::new(1));
             assert!(
                 !window
                     .fast_layers
                     .cached
                     .entries
-                    .contains_key(&CachedLayerId(1))
+                    .contains_key(&CachedLayerId::new(1))
             );
             view.paint_second = false;
             cx.notify();
@@ -459,7 +459,7 @@ fn cached_layer_remove_and_ttl_eviction(cx: &mut crate::TestAppContext) {
     draw_window(cx, handle);
     let key1_after = handle
         .update(cx, |_, window, _| {
-            window.fast_layers.cached.entries[&CachedLayerId(1)].key
+            window.fast_layers.cached.entries[&CachedLayerId::new(1)].key
         })
         .unwrap();
     assert_ne!(key1_before, key1_after);
@@ -476,14 +476,14 @@ fn cached_layer_remove_and_ttl_eviction(cx: &mut crate::TestAppContext) {
                     .fast_layers
                     .cached
                     .entries
-                    .contains_key(&CachedLayerId(2))
+                    .contains_key(&CachedLayerId::new(2))
             );
             assert!(
                 window
                     .fast_layers
                     .cached
                     .entries
-                    .contains_key(&CachedLayerId(1))
+                    .contains_key(&CachedLayerId::new(1))
             );
         })
         .unwrap();
@@ -508,14 +508,14 @@ fn cached_layer_nested_call_bypasses_caching(cx: &mut crate::TestAppContext) {
                     move |_, (), window, _| {
                         let bounds = Bounds::new(point(px(0.), px(0.)), size(px(160.), px(160.)));
                         window.paint_cached_layer(
-                            CachedLayerId(10),
+                            CachedLayerId::new(10),
                             bounds,
                             1,
                             CachedLayerOptions::default().background(crate::white()),
                             |window| {
                                 outer_paints.set(outer_paints.get() + 1);
                                 let ran_inner = window.paint_cached_layer(
-                                    CachedLayerId(11),
+                                    CachedLayerId::new(11),
                                     Bounds::new(point(px(10.), px(10.)), size(px(60.), px(60.))),
                                     1,
                                     CachedLayerOptions::default(),
@@ -557,7 +557,7 @@ fn cached_layer_nested_call_bypasses_caching(cx: &mut crate::TestAppContext) {
                     .fast_layers
                     .cached
                     .entries
-                    .contains_key(&CachedLayerId(11))
+                    .contains_key(&CachedLayerId::new(11))
             );
         })
         .unwrap();
@@ -582,7 +582,7 @@ fn cached_layer_transparent_subpixel_falls_back_to_direct_with_overlay(
                     move |_, (), window, _| {
                         let bounds = Bounds::new(point(px(0.), px(0.)), size(px(200.), px(200.)));
                         window.paint_cached_layer(
-                            CachedLayerId(20),
+                            CachedLayerId::new(20),
                             bounds,
                             1,
                             CachedLayerOptions::default().background(Rgba {
@@ -680,7 +680,7 @@ fn cached_layer_retained_view_replay_keeps_layer_frame(cx: &mut crate::TestAppCo
                     move |_, (), window, _| {
                         let bounds = Bounds::new(point(px(0.), px(0.)), size(px(100.), px(100.)));
                         window.paint_cached_layer(
-                            CachedLayerId(30),
+                            CachedLayerId::new(30),
                             bounds,
                             1,
                             CachedLayerOptions::default().background(crate::white()),
@@ -732,6 +732,161 @@ fn cached_layer_retained_view_replay_keeps_layer_frame(cx: &mut crate::TestAppCo
         .update(cx, |view, window, _| {
             assert_eq!(view.parent_draws, 2);
             assert_eq!(window.rendered_frame.scene.layers.frames.len(), 1);
+        })
+        .unwrap();
+}
+
+#[crate::test]
+fn cached_layer_alloc_key_skips_live_keys_on_wraparound(cx: &mut crate::TestAppContext) {
+    if !crate::fast::layers::COMPILED {
+        return;
+    }
+    struct WrapView {
+        count: usize,
+    }
+    impl Render for WrapView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let count = self.count;
+            div().size_full().child(
+                canvas(
+                    |_, _, _| (),
+                    move |_, (), window, _| {
+                        let bounds = Bounds::new(point(px(10.), px(10.)), size(px(80.), px(80.)));
+                        for id in 1..=count as u64 {
+                            window.paint_cached_layer(
+                                CachedLayerId::new(id),
+                                bounds,
+                                1,
+                                CachedLayerOptions::default(),
+                                |window| {
+                                    window.paint_quad(fill(bounds, Hsla::red()));
+                                },
+                            );
+                        }
+                    },
+                )
+                .size_full(),
+            )
+        }
+    }
+
+    let handle = cx.add_window(|_, _| WrapView { count: 2 });
+    draw_window(cx, handle);
+
+    let (key1, key2) = handle
+        .update(cx, |view, window, cx| {
+            let k1 = window.fast_layers.cached.entries[&CachedLayerId::new(1)].key;
+            let k2 = window.fast_layers.cached.entries[&CachedLayerId::new(2)].key;
+            window.fast_layers.next_key = crate::fast::layers::scene::LAYER_KEY_LIMIT - 1;
+            view.count = 3;
+            cx.notify();
+            (k1, k2)
+        })
+        .unwrap();
+    draw_window(cx, handle);
+
+    let key3 = handle
+        .update(cx, |view, window, cx| {
+            let k3 = window.fast_layers.cached.entries[&CachedLayerId::new(3)].key;
+            assert_eq!(
+                k3.0,
+                crate::fast::layers::scene::LAYER_KEY_LIMIT - 1,
+                "expected last key before wraparound"
+            );
+            view.count = 4;
+            cx.notify();
+            k3
+        })
+        .unwrap();
+    draw_window(cx, handle);
+
+    handle
+        .update(cx, |_, window, _| {
+            let key4 = window.fast_layers.cached.entries[&CachedLayerId::new(4)].key;
+            assert!(key4.0 < crate::fast::layers::scene::LAYER_KEY_LIMIT);
+            assert_ne!(key4, key1);
+            assert_ne!(key4, key2);
+            assert_ne!(key4, key3);
+        })
+        .unwrap();
+}
+
+#[crate::test]
+fn cached_layer_clipped_away_expires_after_drop_frames(cx: &mut crate::TestAppContext) {
+    if !crate::fast::layers::COMPILED {
+        return;
+    }
+    struct ClippedView {
+        clipped_away: bool,
+    }
+    impl Render for ClippedView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let clipped_away = self.clipped_away;
+            div().size_full().child(
+                canvas(
+                    |_, _, _| (),
+                    move |_, (), window, _| {
+                        let bounds = Bounds::new(point(px(10.), px(10.)), size(px(80.), px(80.)));
+                        let mask = if clipped_away {
+                            Some(ContentMask {
+                                bounds: Bounds::new(
+                                    point(px(500.), px(500.)),
+                                    size(px(40.), px(40.)),
+                                ),
+                            })
+                        } else {
+                            None
+                        };
+                        window.with_content_mask(mask, |window| {
+                            window.paint_cached_layer(
+                                CachedLayerId::new(30),
+                                bounds,
+                                1,
+                                CachedLayerOptions::default(),
+                                |window| {
+                                    window.paint_quad(fill(bounds, Hsla::red()));
+                                },
+                            );
+                        });
+                    },
+                )
+                .size_full(),
+            )
+        }
+    }
+
+    let handle = cx.add_window(|_, _| ClippedView {
+        clipped_away: false,
+    });
+    draw_window(cx, handle);
+    handle
+        .update(cx, |view, window, cx| {
+            assert!(
+                window
+                    .fast_layers
+                    .cached
+                    .entries
+                    .contains_key(&CachedLayerId::new(30))
+            );
+            view.clipped_away = true;
+            cx.notify();
+        })
+        .unwrap();
+
+    for _ in 0..=crate::fast::layers::policy::DROP_AFTER_FRAMES {
+        handle.update(cx, |_, _, cx| cx.notify()).unwrap();
+        draw_window(cx, handle);
+    }
+
+    handle
+        .update(cx, |_, window, _| {
+            assert!(
+                !window
+                    .fast_layers
+                    .cached
+                    .entries
+                    .contains_key(&CachedLayerId::new(30))
+            );
         })
         .unwrap();
 }

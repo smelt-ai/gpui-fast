@@ -29,7 +29,7 @@ const TRANSPARENT_BLACK: Rgba = Rgba {
 
 /// Stable caller-chosen identifier for a cached layer in a window.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct CachedLayerId(pub u64);
+pub struct CachedLayerId(u64);
 
 impl CachedLayerId {
     /// Creates a cached layer identifier from a raw `u64` key.
@@ -49,8 +49,15 @@ impl From<u64> for CachedLayerId {
     }
 }
 
+impl From<CachedLayerId> for u64 {
+    fn from(id: CachedLayerId) -> Self {
+        id.0
+    }
+}
+
 /// Rendering options for [`Window::paint_cached_layer`].
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[non_exhaustive]
 pub struct CachedLayerOptions {
     /// Explicit tile clear color. When `None`, automatically bakes a solid
     /// opaque backdrop underneath the layer if available, or clears to
@@ -180,64 +187,50 @@ pub(crate) fn paint_cached_layer<R>(
 
     let clipped = bounds.intersect(&window.content_mask().bounds);
     if clipped.is_empty() {
-        if let Some(layer) = window.fast_layers.cached.entries.get_mut(&id) {
-            layer.last_composited_frame = frame;
-        }
         return None;
     }
 
     let clipped_viewport = window.cover_bounds(clipped);
-    let can_reuse = window
+    let cached_bg = window
         .fast_layers
         .cached
         .entries
         .get(&id)
         .and_then(|layer| layer.record.as_ref())
-        .is_some_and(|record| {
+        .filter(|record| {
             record.revision == revision
                 && record.scale_factor == scale_factor
                 && record.bounds_size == bounds.size
-        });
+        })
+        .map(|record| record.background);
 
     let target_translation = translation(window, bounds.origin + options.offset);
 
-    if can_reuse {
-        let cached_bg = window.fast_layers.cached.entries[&id]
-            .record
-            .as_ref()
-            .expect("checked above")
-            .background;
+    if let Some(cached_bg) = cached_bg {
         let next_bg = match options.background {
             Some(bg) => bg,
             None if cached_bg.a < 1.0 => cached_bg,
             None => bake_under(window, clipped_viewport).unwrap_or(TRANSPARENT_BLACK),
         };
-        let layer = window
-            .fast_layers
-            .cached
-            .entries
-            .get_mut(&id)
-            .expect("checked above");
-        layer.last_composited_frame = frame;
-        let next_gen = if next_bg != cached_bg {
-            layer.generation += 1;
-            Some(layer.generation)
-        } else {
-            None
-        };
-        let record = layer.record.as_mut().expect("checked above");
-        if let Some(generation) = next_gen {
-            let now_tiled = record.tileable_opaque && (next_bg.a >= 1.0 || !record.has_subpixel);
-            record.background = next_bg;
-            record.generation = generation;
-            record.tiled = now_tiled;
-            record.dirty_tiles = if now_tiled {
-                all_tiles(&record.tile_hashes)
+        if let Some(layer) = window.fast_layers.cached.entries.get_mut(&id)
+            && let Some(record) = layer.record.as_mut()
+        {
+            layer.last_composited_frame = frame;
+            if next_bg != cached_bg {
+                layer.generation += 1;
+                let now_tiled =
+                    record.tileable_opaque && (next_bg.a >= 1.0 || !record.has_subpixel);
+                record.background = next_bg;
+                record.generation = layer.generation;
+                record.tiled = now_tiled;
+                record.dirty_tiles = if now_tiled {
+                    all_tiles(&record.tile_hashes)
+                } else {
+                    Vec::new()
+                };
             } else {
-                Vec::new()
-            };
-        } else {
-            record.dirty_tiles.clear();
+                record.dirty_tiles.clear();
+            }
         }
         emit_cached_layer(window, id, clipped, target_translation);
         return None;
@@ -282,12 +275,9 @@ pub(crate) fn paint_cached_layer<R>(
         );
     }
 
-    let layer = window
-        .fast_layers
-        .cached
-        .entries
-        .get_mut(&id)
-        .expect("inserted above");
+    let Some(layer) = window.fast_layers.cached.entries.get_mut(&id) else {
+        return Some(result);
+    };
     layer.last_composited_frame = frame;
 
     let reused_generation = layer

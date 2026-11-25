@@ -8,7 +8,7 @@
 
 use std::ops::Range;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use gpui::{
     AtlasTextureId, LayerKey, PolychromeSprite, Scene, TileCoord, TileId, decode_layer_tile,
 };
@@ -29,10 +29,11 @@ pub(crate) struct LayerTilePipeline {
 impl LayerTilePipeline {
     pub(crate) fn new(device: &ID3D11Device) -> Result<Self> {
         let raw_shader = RawShaderBytes::new(ShaderModule::LayerTile, ShaderTarget::Fragment)?;
+        // SAFETY: `raw_shader` is valid compiled DXBC bytecode and `shader` is a valid out-pointer.
         let fragment = unsafe {
             let mut shader = None;
             device.CreatePixelShader(raw_shader.as_bytes(), None, Some(&mut shader))?;
-            shader.unwrap()
+            shader.context("CreatePixelShader returned null shader")?
         };
         let mut desc = D3D11_BLEND_DESC::default();
         desc.RenderTarget[0].BlendEnable = true.into();
@@ -43,10 +44,11 @@ impl LayerTilePipeline {
         desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
         desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
         desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
+        // SAFETY: `desc` is initialized and `state` is a valid out-pointer.
         let blend_state = unsafe {
             let mut state = None;
             device.CreateBlendState(&desc, Some(&mut state))?;
-            state.unwrap()
+            state.context("CreateBlendState returned null blend state")?
         };
         Ok(Self {
             fragment,
