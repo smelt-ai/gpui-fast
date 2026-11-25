@@ -48,6 +48,8 @@ pub(crate) fn configure_native_hole_blend(
     if label == "native_views" {
         attachment.setSourceRGBBlendFactor(MTLBlendFactor::Zero);
         attachment.setSourceAlphaBlendFactor(MTLBlendFactor::Zero);
+    } else if label == "layer_tiles" {
+        attachment.setSourceRGBBlendFactor(MTLBlendFactor::One);
     }
 }
 

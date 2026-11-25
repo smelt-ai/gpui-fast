@@ -63,7 +63,7 @@ const MAX_COOLDOWN_DOUBLINGS: u8 = 5;
 /// [`MAX_COOLDOWN_DOUBLINGS`] times, until the layer is composited.
 const RETRY_AFTER_INELIGIBLE_FRAMES: u64 = 8;
 /// A layer not composited for this many frames is dropped.
-const DROP_AFTER_FRAMES: u64 = 120;
+pub(crate) const DROP_AFTER_FRAMES: u64 = 120;
 /// The tile textures a window's layers may use, in bytes.
 const TILE_BUDGET_BYTES: u64 = 64 << 20;
 /// The side of a tile, in device pixels (spec §3).

@@ -25,8 +25,8 @@ use crate::{
             policy::{self, Decision},
             record::LayerRecord,
             scene::{
-                LayerContent, LayerFrame, LayerKey, decode_layer_tile, layer_tile_id,
-                layer_tile_texture_id, translate_primitive, visible_bounds,
+                LayerContent, LayerFrame, decode_layer_tile, layer_tile_id, layer_tile_texture_id,
+                translate_primitive, visible_bounds,
             },
             tiles::{dirty_tiles, tile_hashes},
         },
@@ -517,6 +517,21 @@ pub(crate) fn insert_tile_quads(
         content: record.content.clone(),
         dirty_tiles: record.dirty_tiles.clone(),
     };
+    insert_frame_tile_quads(scene, frame, viewport, translation);
+}
+
+/// Inserts into `scene` the tile quads and [`LayerFrame`] for `frame` over
+/// `viewport`, moved by `translation`.
+pub(crate) fn insert_frame_tile_quads(
+    scene: &mut Scene,
+    frame: LayerFrame,
+    viewport: Bounds<ScaledPixels>,
+    translation: Point<ScaledPixels>,
+) {
+    if viewport.is_empty() {
+        return;
+    }
+    let layer_key = frame.key;
     let size = TILE_SIZE as f32;
     let content_viewport = Bounds {
         origin: viewport.origin - translation,
@@ -533,7 +548,7 @@ pub(crate) fn insert_tile_quads(
         (max.y.0 / size).ceil() as i32,
     );
     scene.push_layer(viewport);
-    let texture_id = layer_tile_texture_id(layer.key);
+    let texture_id = layer_tile_texture_id(layer_key);
     for y in y0..y1 {
         for x in x0..x1 {
             let coord = TileCoord { x, y };
@@ -571,7 +586,7 @@ pub(crate) fn insert_tile_quads(
 /// Inserts into `scene` the overlay a layer keeps apart from its tiles,
 /// moved by `translation` and clipped to `viewport`, after its tile quads,
 /// so that it is drawn over them (see `fast::layers::overlay`).
-fn insert_overlay(
+pub(crate) fn insert_overlay(
     scene: &mut Scene,
     overlay: &[Primitive],
     translation: Point<ScaledPixels>,
@@ -589,12 +604,12 @@ fn insert_overlay(
 /// primitive's but a path's, and on [`snap_path`]'s grid, as
 /// `Window::paint_path` takes it, for paths.
 #[derive(Clone, Copy)]
-struct Viewports {
-    snapped: Bounds<ScaledPixels>,
-    exact: Bounds<ScaledPixels>,
+pub(crate) struct Viewports {
+    pub(crate) snapped: Bounds<ScaledPixels>,
+    pub(crate) exact: Bounds<ScaledPixels>,
 }
 
-fn viewports(window: &Window) -> Viewports {
+pub(crate) fn viewports(window: &Window) -> Viewports {
     Viewports {
         snapped: window.snapped_content_mask().bounds,
         exact: snap_bounds(window.content_mask().bounds.scale(window.scale_factor())),
@@ -952,8 +967,7 @@ pub(crate) fn finish_frame(window: &mut Window) {
 pub(crate) fn layer_mut<'a>(window: &'a mut Window, id: &GlobalElementId) -> &'a mut Layer {
     let layers = &mut window.fast_layers;
     if !layers.layers.contains_key(id) {
-        let key = LayerKey(layers.next_key % crate::fast::layers::scene::LAYER_KEY_LIMIT);
-        layers.next_key = (layers.next_key + 1) % crate::fast::layers::scene::LAYER_KEY_LIMIT;
+        let key = layers.alloc_key();
         layers.layers.insert(
             id.clone(),
             Layer {
@@ -1033,7 +1047,7 @@ pub(crate) fn translation(window: &Window, scroll_offset: Point<Pixels>) -> Poin
 }
 
 /// `scene` moved by `delta`, finished.
-fn translated_scene(scene: &Scene, delta: Point<ScaledPixels>) -> Scene {
+pub(crate) fn translated_scene(scene: &Scene, delta: Point<ScaledPixels>) -> Scene {
     let mut translated = Scene::default();
     for operation in &scene.paint_operations {
         match operation {

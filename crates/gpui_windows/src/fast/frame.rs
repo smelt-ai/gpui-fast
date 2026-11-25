@@ -396,6 +396,11 @@ pub(crate) fn draw_scene_masked(
             PrimitiveBatch::PolychromeSprites { texture_id, range }
                 if composite::is_layer_texture(texture_id) =>
             {
+                let premultiplied = composite::is_premultiplied_layer(layers, texture_id)
+                    .then_some((
+                        &pipelines.fast_layer_tiles.fragment,
+                        &pipelines.fast_layer_tiles.blend_state,
+                    ));
                 let sprites = &scene.polychrome_sprites;
                 composite::tile_runs(sprites, range).try_for_each(|run| {
                     let Some(view) =
@@ -405,7 +410,13 @@ pub(crate) fn draw_scene_masked(
                     };
                     let pipeline = &pipelines.poly_sprites;
                     let sampler = std::mem::replace(&mut draw.sampler, layers.sampler());
-                    let drawn = draw.instances(pipeline, run.start, run.len(), Some(view));
+                    let drawn = draw.instances_with(
+                        pipeline,
+                        premultiplied,
+                        run.start,
+                        run.len(),
+                        Some(view),
+                    );
                     draw.sampler = sampler;
                     drawn
                 })
@@ -458,6 +469,20 @@ impl Draw<'_> {
         instance_count: usize,
         texture: Option<&Option<ID3D11ShaderResourceView>>,
     ) -> Result<()> {
+        self.instances_with(pipeline, None, first_instance, instance_count, texture)
+    }
+
+    fn instances_with<T>(
+        &mut self,
+        pipeline: &PipelineState<T>,
+        overrides: Option<(
+            &windows::Win32::Graphics::Direct3D11::ID3D11PixelShader,
+            &windows::Win32::Graphics::Direct3D11::ID3D11BlendState,
+        )>,
+        first_instance: usize,
+        instance_count: usize,
+        texture: Option<&Option<ID3D11ShaderResourceView>>,
+    ) -> Result<()> {
         if instance_count == 0 {
             return Ok(());
         }
@@ -469,8 +494,18 @@ impl Draw<'_> {
         let context = self.device_context;
         self.state
             .set_batch_start(context, self.batch_params, first_instance as u32)?;
-        self.state
-            .set_pipeline(context, pipeline, D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+        if let Some((fragment, blend_state)) = overrides {
+            self.state.set_pipeline_with_overrides(
+                context,
+                pipeline,
+                fragment,
+                blend_state,
+                D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            );
+        } else {
+            self.state
+                .set_pipeline(context, pipeline, D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+        }
         if let Some(texture) = texture {
             self.state.set_texture(context, texture, self.sampler);
         }

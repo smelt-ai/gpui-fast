@@ -6,6 +6,7 @@
 //! work stream of the plan (docs/superpowers/plans/2026-09-30-scroll-layers.md).
 
 pub(crate) mod background;
+pub(crate) mod cached;
 pub(crate) mod hover_freeze;
 pub(crate) mod input;
 pub(crate) mod invalidate;
@@ -63,6 +64,18 @@ pub(crate) struct WindowLayers {
     pub(crate) wheel: wheel::WheelDispatch,
     /// When the last wheel event came, for hover to be held still a while.
     pub(crate) hover_freeze: hover_freeze::HoverFreeze,
+    /// Caller-managed cached layers keyed by [`cached::CachedLayerId`].
+    pub(crate) cached: cached::CachedLayers,
+    /// True while painting inside [`Window::paint_cached_layer`].
+    pub(crate) painting_cached: bool,
+}
+
+impl WindowLayers {
+    pub(crate) fn alloc_key(&mut self) -> scene::LayerKey {
+        let key = scene::LayerKey(self.next_key % scene::LAYER_KEY_LIMIT);
+        self.next_key = (self.next_key + 1) % scene::LAYER_KEY_LIMIT;
+        key
+    }
 }
 
 impl Default for WindowLayers {
@@ -80,6 +93,8 @@ impl Default for WindowLayers {
             window_size: None,
             wheel: wheel::WheelDispatch::default(),
             hover_freeze: hover_freeze::HoverFreeze::default(),
+            cached: cached::CachedLayers::default(),
+            painting_cached: false,
         }
     }
 }
@@ -142,6 +157,7 @@ pub(crate) fn finish_frame(window: &mut Window) {
     let frame = layers.frame;
     policy::finish_frame(layers);
     layers.layers.retain(|_, layer| policy::keep(layer, frame));
+    cached::finish_frame(layers);
     let live = &layers.layers;
     layers
         .scrolls

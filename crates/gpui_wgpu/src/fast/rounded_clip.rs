@@ -258,6 +258,25 @@ pub(crate) fn shader(source: &str) -> String {
         "if (is_opaque_rectangle(quad) && globals.pad == 0u) {",
         1,
     );
+    if source.contains("fn fs_poly_sprite(") {
+        source.push_str(
+            r#"
+@fragment
+fn fs_layer_tile(input: PolySpriteVarying) -> @location(0) vec4<f32> {
+    var color = textureSample(t_sprite, s_sprite, input.tile_position);
+    if ((input.sprite_id & SIMPLE_PRIMITIVE_FLAG) != 0u) {
+        return color * input.opacity;
+    }
+    let sprite = load_poly_sprite(input.sprite_id);
+    if (sprite.grayscale != 0u) {
+        color = vec4<f32>(vec3<f32>(dot(color.rgb, GRAYSCALE_FACTORS)), color.a);
+    }
+    let distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+    return color * (input.opacity * saturate(0.5 - distance));
+}
+"#,
+        );
+    }
     for name in [
         "fs_quad",
         "fs_shadow",
@@ -265,6 +284,7 @@ pub(crate) fn shader(source: &str) -> String {
         "fs_underline",
         "fs_mono_sprite",
         "fs_poly_sprite",
+        "fs_layer_tile",
         "fs_surface",
         "fs_subpixel_sprite",
     ] {
@@ -290,7 +310,11 @@ pub(crate) fn shader(source: &str) -> String {
         } else {
             "fast_clip_color"
         };
-        let premultiplied = "globals.premultiplied_alpha != 0u";
+        let premultiplied = if name == "fs_layer_tile" {
+            "true"
+        } else {
+            "globals.premultiplied_alpha != 0u"
+        };
         let mut remaining = &source[body_start + 1..body_end];
         let mut body = String::new();
         while let Some(start) = remaining.find("return ") {

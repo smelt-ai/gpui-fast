@@ -128,6 +128,7 @@ pub(crate) struct WgpuPipelines {
     pub(crate) mono_sprites: wgpu::RenderPipeline,
     pub(crate) subpixel_sprites: Option<wgpu::RenderPipeline>,
     pub(crate) poly_sprites: wgpu::RenderPipeline,
+    pub(crate) fast_layer_tiles: wgpu::RenderPipeline,
     #[allow(dead_code)]
     surfaces: wgpu::RenderPipeline,
     pub(crate) premultiplied_alpha: bool,
@@ -969,6 +970,12 @@ impl WgpuRendererCore {
             false,
             &shader_module,
         );
+        let fast_layer_tiles = crate::fast::layers::composite::create_pipeline(
+            device,
+            layouts,
+            surface_format,
+            &shader_module,
+        );
 
         let surfaces = create_pipeline(
             "surfaces",
@@ -992,6 +999,7 @@ impl WgpuRendererCore {
             mono_sprites,
             subpixel_sprites,
             poly_sprites,
+            fast_layer_tiles,
             surfaces,
             premultiplied_alpha,
         }

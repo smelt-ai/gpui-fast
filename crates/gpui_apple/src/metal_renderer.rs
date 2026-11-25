@@ -148,6 +148,8 @@ pub struct MetalRenderer {
     // Shared with fast::layers when drawing sprites backed by tile textures.
     pub(crate) polychrome_sprites_pipeline_state:
         Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
+    pub(crate) fast_layer_tiles_pipeline_state:
+        Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
     surfaces_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
     native_views_pipeline_state: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
     depth_write_state: Retained<ProtocolObject<dyn MTLDepthStencilState>>,
@@ -357,6 +359,8 @@ impl MetalRenderer {
             MTLPixelFormat::BGRA8Unorm,
             true,
         )?;
+        let fast_layer_tiles_pipeline_state =
+            crate::fast::layers::composite::build_pipeline(&device, &library)?;
         let surfaces_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -418,6 +422,7 @@ impl MetalRenderer {
             underlines_pipeline_state,
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
+            fast_layer_tiles_pipeline_state,
             surfaces_pipeline_state,
             native_views_pipeline_state,
             depth_write_state,
@@ -1438,7 +1443,7 @@ fn read_texture_to_image(texture: &ProtocolObject<dyn MTLTexture>) -> Result<Rgb
     RgbaImage::from_raw(width, height, pixels).context("creating RGBA image from pixel data")
 }
 
-fn build_pipeline_state(
+pub(crate) fn build_pipeline_state(
     device: &ProtocolObject<dyn MTLDevice>,
     library: &ProtocolObject<dyn MTLLibrary>,
     label: &str,

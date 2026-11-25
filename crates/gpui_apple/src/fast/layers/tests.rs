@@ -1007,5 +1007,471 @@ impl Harness {
     }
 }
 
+fn assert_pixels_within(actual: &[u8], expected: &[u8], width: usize, max_delta: u8) {
+    assert_eq!(actual.len(), expected.len());
+    let mut worst: Option<(usize, usize, [u8; 4], [u8; 4], u8)> = None;
+    let mut count = 0usize;
+    for i in 0..actual.len() / 4 {
+        let a = [
+            actual[i * 4],
+            actual[i * 4 + 1],
+            actual[i * 4 + 2],
+            actual[i * 4 + 3],
+        ];
+        let e = [
+            expected[i * 4],
+            expected[i * 4 + 1],
+            expected[i * 4 + 2],
+            expected[i * 4 + 3],
+        ];
+        let diff = (0..4).map(|c| a[c].abs_diff(e[c])).max().unwrap_or(0);
+        if diff > max_delta {
+            count += 1;
+            if worst.as_ref().is_none_or(|w| diff > w.4) {
+                worst = Some((i % width, i / width, a, e, diff));
+            }
+        }
+    }
+    if let Some((x, y, a, e, diff)) = worst {
+        panic!(
+            "{count} pixels differ by more than {max_delta}; worst at ({x}, {y}) delta {diff}: {a:?} instead of {e:?}"
+        );
+    }
+}
+
+fn render_window_fixture(
+    cx: &mut gpui::TestAppContext,
+    harness: &mut Harness,
+    logical_size: Size<gpui::Pixels>,
+    build: impl FnMut(&mut gpui::Window, &mut gpui::App) -> gpui::AnyElement + 'static,
+) -> (gpui::AnyWindowHandle, Vec<u8>, Size<DevicePixels>) {
+    use gpui::{AppContext as _, Context, IntoElement, Render, WindowBounds, WindowOptions};
+
+    struct View(Box<dyn FnMut(&mut gpui::Window, &mut gpui::App) -> gpui::AnyElement>);
+    impl Render for View {
+        fn render(
+            &mut self,
+            window: &mut gpui::Window,
+            cx: &mut Context<Self>,
+        ) -> impl IntoElement {
+            (self.0)(window, cx)
+        }
+    }
+    let window = cx.update(|cx| {
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::new(
+                    point(px(0.), px(0.)),
+                    logical_size,
+                ))),
+                ..Default::default()
+            },
+            |_, cx| cx.new(|_| View(Box::new(build))),
+        )
+        .unwrap()
+    });
+    let (pixels, size) = window
+        .update(cx, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            let sf = window.scale_factor();
+            let size = device_size(
+                (f32::from(logical_size.width) * sf).round() as i32,
+                (f32::from(logical_size.height) * sf).round() as i32,
+            );
+            (harness.render(window.painted_scene(), size), size)
+        })
+        .unwrap();
+    (window.into(), pixels, size)
+}
+
+fn redraw_window_fixture(
+    cx: &mut gpui::TestAppContext,
+    handle: gpui::AnyWindowHandle,
+    harness: &mut Harness,
+    size: Size<DevicePixels>,
+) -> Vec<u8> {
+    use gpui::AppContext as _;
+    cx.update_window(handle, |_, window, cx| {
+        window.refresh();
+        window.draw(cx).clear(cx);
+        harness.render(window.painted_scene(), size)
+    })
+    .unwrap()
+}
+
+#[gpui::test]
+fn cached_layer_opaque_matches_direct_and_skips_hit_rasterization(cx: &mut gpui::TestAppContext) {
+    use gpui::{
+        CachedLayerId, CachedLayerOptions, IntoElement as _, ParentElement as _, Styled as _,
+        canvas, div, fill,
+    };
+    use std::cell::Cell;
+
+    let mut harness = Harness::new().expect("Metal device required");
+    let logical_size = size(px(160.), px(160.));
+    let (_, direct_pixels, _) = render_window_fixture(cx, &mut harness, logical_size, |_, _| {
+        div()
+            .size_full()
+            .bg(gpui::white())
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    |bounds, (), window, _| {
+                        window.paint_quad(fill(
+                            Bounds::new(
+                                bounds.origin + point(px(16.), px(16.)),
+                                size(px(64.), px(64.)),
+                            ),
+                            Hsla::red(),
+                        ));
+                    },
+                )
+                .size_full(),
+            )
+            .into_any_element()
+    });
+
+    let paints = Rc::new(Cell::new(0usize));
+    let paints_ref = paints.clone();
+    let r0 = harness.cache().rasterized;
+    let (handle, pixels1, size_dp) =
+        render_window_fixture(cx, &mut harness, logical_size, move |_, _| {
+            let paints = paints_ref.clone();
+            div()
+                .size_full()
+                .bg(gpui::white())
+                .child(
+                    canvas(
+                        |_, _, _| (),
+                        move |bounds, (), window, _| {
+                            window.paint_cached_layer(
+                                CachedLayerId(1),
+                                bounds,
+                                1,
+                                CachedLayerOptions::default().background(gpui::white()),
+                                |window| {
+                                    paints.set(paints.get() + 1);
+                                    window.paint_quad(fill(
+                                        Bounds::new(
+                                            bounds.origin + point(px(16.), px(16.)),
+                                            size(px(64.), px(64.)),
+                                        ),
+                                        Hsla::red(),
+                                    ));
+                                },
+                            );
+                        },
+                    )
+                    .size_full(),
+                )
+                .into_any_element()
+        });
+    assert_eq!(paints.get(), 1);
+    assert_eq!(harness.cache().rasterized, r0 + 1);
+    assert_same_pixels(&pixels1, &direct_pixels, size_dp.width.0 as usize);
+
+    // Frame 2 with unchanged revision: neither CPU closure nor GPU tile rasterization runs.
+    let pixels2 = redraw_window_fixture(cx, handle, &mut harness, size_dp);
+    assert_eq!(paints.get(), 1);
+    assert_eq!(harness.cache().rasterized, r0 + 1);
+    assert_same_pixels(&pixels2, &direct_pixels, size_dp.width.0 as usize);
+}
+
+#[test]
+fn cached_layer_transparent_matches_direct_over_gradient_backdrop() {
+    let Some(mut harness) = Harness::new() else {
+        eprintln!("skipped: no Metal device");
+        return;
+    };
+    let size = device_size(256, 256);
+    let viewport = sp(0., 0., 256., 256.);
+    let key = LayerKey(50);
+    let glyph = glyph_tile(&harness, 0);
+
+    let build_foreground = |scene: &mut Scene, offset: (f32, f32)| {
+        let mask = ContentMask { bounds: viewport };
+        scene.insert_primitive(Quad {
+            order: 0,
+            background: rgba(0x112233ff).into(),
+            bounds: sp(offset.0 + 16., offset.1 + 16., 48., 48.),
+            content_mask: mask,
+            ..Default::default()
+        });
+        scene.insert_primitive(Quad {
+            order: 0,
+            background: rgba(0xee224480).into(),
+            bounds: sp(offset.0 + 48., offset.1 + 48., 110., 110.),
+            content_mask: mask,
+            corner_radii: Corners::all(ScaledPixels(12.)),
+            ..Default::default()
+        });
+        scene.insert_primitive(Quad {
+            order: 0,
+            background: rgba(0x22ee6680).into(),
+            bounds: sp(offset.0 + 96., offset.1 + 88., 96., 96.),
+            content_mask: mask,
+            ..Default::default()
+        });
+        scene.insert_primitive(Shadow {
+            order: 0,
+            blur_radius: ScaledPixels(8.),
+            bounds: sp(offset.0 + 40., offset.1 + 180., 140., 40.),
+            corner_radii: Corners::all(ScaledPixels(8.)),
+            content_mask: mask,
+            color: Hsla::from(rgba(0x00000090)),
+            shape_bounds: sp(offset.0 + 40., offset.1 + 180., 140., 40.),
+            shape_corner_radii: Corners::all(ScaledPixels(8.)),
+            inset: false.into(),
+            pad: 0,
+        });
+        scene.insert_primitive(MonochromeSprite {
+            order: 0,
+            animation: Default::default(),
+            bounds: sp(offset.0 + 170., offset.1 + 30., 24., 24.),
+            content_mask: mask,
+            color: Hsla::from(rgba(0xffffffc0)),
+            tile: glyph.clone(),
+            transformation: TransformationMatrix::unit(),
+        });
+    };
+
+    let backdrop = || Quad {
+        bounds: viewport,
+        content_mask: ContentMask { bounds: viewport },
+        background: linear_gradient(
+            90.,
+            linear_color_stop(rgba(0x1144aaff), 0.),
+            linear_color_stop(rgba(0xff6622ff), 1.),
+        ),
+        ..Default::default()
+    };
+
+    let mut direct = Scene::default();
+    direct.insert_primitive(backdrop());
+    build_foreground(&mut direct, (0., 0.));
+    direct.finish();
+    let expected = harness.render(&direct, size);
+
+    let mut content = Scene::default();
+    build_foreground(&mut content, (0., 0.));
+    content.finish();
+
+    let layer = LayerFrame {
+        key,
+        generation: 1,
+        background: Rgba {
+            r: 0.,
+            g: 0.,
+            b: 0.,
+            a: 0.,
+        },
+        tile_size: TILE,
+        content: Rc::new(content).into(),
+        dirty_tiles: vec![coord(0, 0)],
+    };
+    let mut cached = Scene::default();
+    cached.insert_primitive(backdrop());
+    cached.push_layer(viewport);
+    cached.insert_primitive(tile_sprite(key, &layer, coord(0, 0), (0., 0.), viewport));
+    cached.pop_layer();
+    cached.layers.frames.push(layer);
+    cached.finish();
+
+    let r0 = harness.cache().rasterized;
+    let actual = harness.render(&cached, size);
+    assert!(harness.cache().is_premultiplied(key));
+    assert_eq!(harness.cache().rasterized, r0 + 1);
+    assert_pixels_within(&actual, &expected, size.width.0 as usize, 2);
+
+    // Opaque quad and transparent corners match byte-for-byte with zero halo.
+    assert_eq!(
+        pixel(&actual, size.width.0 as usize, 32, 32),
+        pixel(&expected, size.width.0 as usize, 32, 32)
+    );
+    assert_eq!(
+        pixel(&actual, size.width.0 as usize, 240, 240),
+        pixel(&expected, size.width.0 as usize, 240, 240)
+    );
+
+    // Cache hit does not re-rasterize.
+    let actual2 = harness.render(&cached, size);
+    assert_eq!(harness.cache().rasterized, r0 + 1);
+    assert_eq!(actual, actual2);
+}
+
+#[gpui::test]
+fn cached_layer_transparent_inside_fast_rounded_clip_matches_direct(cx: &mut gpui::TestAppContext) {
+    use gpui::{
+        CachedLayerId, CachedLayerOptions, IntoElement as _, ParentElement as _, Styled as _,
+        canvas, div, fill,
+    };
+
+    let mut harness = Harness::new().expect("Metal device required");
+    let logical_size = size(px(128.), px(128.));
+    let make_div = |cached: bool| {
+        let backdrop = linear_gradient(
+            45.,
+            linear_color_stop(rgba(0x183060ff), 0.),
+            linear_color_stop(rgba(0xd05020ff), 1.),
+        );
+        div()
+            .size_full()
+            .bg(backdrop)
+            .child(
+                div().size_full().rounded(px(28.)).overflow_hidden().child(
+                    canvas(
+                        |_, _, _| (),
+                        move |bounds, (), window, _| {
+                            let paint = |window: &mut gpui::Window| {
+                                window.paint_quad(fill(
+                                    Bounds::new(bounds.origin, size(px(128.), px(64.))),
+                                    rgba(0xee335599),
+                                ));
+                                window.paint_quad(fill(
+                                    Bounds::new(
+                                        bounds.origin + point(px(20.), px(20.)),
+                                        size(px(88.), px(88.)),
+                                    ),
+                                    rgba(0x22cc8888),
+                                ));
+                            };
+                            if cached {
+                                window.paint_cached_layer(
+                                    CachedLayerId(99),
+                                    bounds,
+                                    1,
+                                    CachedLayerOptions::default().background(Rgba {
+                                        r: 0.,
+                                        g: 0.,
+                                        b: 0.,
+                                        a: 0.,
+                                    }),
+                                    paint,
+                                );
+                            } else {
+                                paint(window);
+                            }
+                        },
+                    )
+                    .size_full(),
+                ),
+            )
+            .into_any_element()
+    };
+
+    let (_, expected, size_dp) =
+        render_window_fixture(cx, &mut harness, logical_size, move |_, _| make_div(false));
+    let (_, actual, _) =
+        render_window_fixture(cx, &mut harness, logical_size, move |_, _| make_div(true));
+
+    assert_pixels_within(&actual, &expected, size_dp.width.0 as usize, 2);
+    // Clipped corner pixel must match backdrop gradient untouched.
+    assert_eq!(
+        pixel(&actual, size_dp.width.0 as usize, 2, 2),
+        pixel(&expected, size_dp.width.0 as usize, 2, 2)
+    );
+}
+
+#[gpui::test]
+fn cached_layer_multi_tile_partial_update_rasterizes_only_dirty_tile(
+    cx: &mut gpui::TestAppContext,
+) {
+    use gpui::{
+        CachedLayerId, CachedLayerOptions, IntoElement as _, ParentElement as _, Styled as _,
+        canvas, div, fill,
+    };
+    use std::cell::Cell;
+
+    let mut harness = Harness::new().expect("Metal device required");
+    let logical_size = size(px(800.), px(200.));
+    let draw_pair = |window: &mut gpui::Window, bounds: Bounds<gpui::Pixels>, right_color: Hsla| {
+        window.paint_quad(fill(
+            Bounds::new(
+                bounds.origin + point(px(20.), px(20.)),
+                size(px(120.), px(120.)),
+            ),
+            Hsla::red(),
+        ));
+        window.paint_quad(fill(
+            Bounds::new(
+                bounds.origin + point(px(580.), px(20.)),
+                size(px(120.), px(120.)),
+            ),
+            right_color,
+        ));
+    };
+
+    let (_, expected1, size_dp) =
+        render_window_fixture(cx, &mut harness, logical_size, move |_, _| {
+            div()
+                .size_full()
+                .bg(gpui::white())
+                .child(
+                    canvas(
+                        |_, _, _| (),
+                        move |bounds, (), window, _| draw_pair(window, bounds, Hsla::blue()),
+                    )
+                    .size_full(),
+                )
+                .into_any_element()
+        });
+    let (_, expected2, _) = render_window_fixture(cx, &mut harness, logical_size, move |_, _| {
+        div()
+            .size_full()
+            .bg(gpui::white())
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |bounds, (), window, _| draw_pair(window, bounds, Hsla::green()),
+                )
+                .size_full(),
+            )
+            .into_any_element()
+    });
+
+    let rev = Rc::new(Cell::new(1u64));
+    let rev_ref = rev.clone();
+    let r0 = harness.cache().rasterized;
+    let (handle, actual1, _) =
+        render_window_fixture(cx, &mut harness, logical_size, move |_, _| {
+            let r = rev_ref.get();
+            div()
+                .size_full()
+                .bg(gpui::white())
+                .child(
+                    canvas(
+                        |_, _, _| (),
+                        move |bounds, (), window, _| {
+                            window.paint_cached_layer(
+                                CachedLayerId(77),
+                                bounds,
+                                r,
+                                CachedLayerOptions::default().background(gpui::white()),
+                                |window| {
+                                    let right = if r == 1 { Hsla::blue() } else { Hsla::green() };
+                                    draw_pair(window, bounds, right);
+                                },
+                            );
+                        },
+                    )
+                    .size_full(),
+                )
+                .into_any_element()
+        });
+
+    let cols = (size_dp.width.0 as u32).div_ceil(TILE) as usize;
+    let rows = (size_dp.height.0 as u32).div_ceil(TILE) as usize;
+    let tile_count = cols * rows;
+    assert!(tile_count >= 2);
+    assert_eq!(harness.cache().rasterized, r0 + tile_count);
+    assert_same_pixels(&actual1, &expected1, size_dp.width.0 as usize);
+
+    // Bump revision changing only the right-hand tile (`x = 580`): only 1 tile rasterizes!
+    rev.set(2);
+    let actual2 = redraw_window_fixture(cx, handle, &mut harness, size_dp);
+    assert_eq!(harness.cache().rasterized, r0 + tile_count + 1);
+    assert_same_pixels(&actual2, &expected2, size_dp.width.0 as usize);
+}
+
 #[path = "../../../../gpui_linux/src/fast/composition/occluders.rs"]
 mod x11_occluder_tests;

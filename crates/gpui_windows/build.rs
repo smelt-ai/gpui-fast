@@ -44,6 +44,7 @@ mod shader_compilation {
             "monochrome_sprite",
             "subpixel_sprite",
             "polychrome_sprite",
+            "layer_tile", // fast: premultiplied layer tiles
         ];
 
         let rust_binding_path = format!("{}/shaders_bytes.rs", out_dir);

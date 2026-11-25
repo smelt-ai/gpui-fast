@@ -58,6 +58,7 @@ struct Tile {
 struct SeenLayer {
     generation: u64,
     last_frame: u64,
+    premultiplied: bool,
 }
 
 pub(crate) struct TileTexture {
@@ -80,6 +81,14 @@ impl TileCache {
             .filter(|tile| tile.valid)
             .and_then(|tile| tile.texture.as_ref())
             .map(|texture| &texture.view)
+    }
+
+    /// Whether `layer` was cleared with a non-opaque background and must be
+    /// composited with premultiplied alpha blending.
+    pub(crate) fn is_premultiplied(&self, layer: LayerKey) -> bool {
+        self.layers
+            .get(&layer)
+            .is_some_and(|seen| seen.premultiplied)
     }
 
     #[cfg(test)]
@@ -120,11 +129,14 @@ impl TileCache {
         let mut planned = FxHashSet::default();
 
         for layer in &layers.frames {
+            let premultiplied = layer.background.a < 1.0;
             let seen = self.layers.entry(layer.key).or_insert(SeenLayer {
                 generation: layer.generation.wrapping_sub(2),
                 last_frame: frame,
+                premultiplied,
             });
             seen.last_frame = frame;
+            seen.premultiplied = premultiplied;
             if seen.generation == layer.generation {
                 continue;
             }

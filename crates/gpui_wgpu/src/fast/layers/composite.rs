@@ -13,6 +13,67 @@ use gpui::{
 };
 
 use crate::fast::layers::TileCache;
+use crate::wgpu_renderer::{DEPTH_FORMAT, WgpuBindGroupLayouts};
+
+/// Builds the premultiplied-alpha render pipeline used when compositing
+/// layer tiles whose background is transparent or translucent.
+pub(crate) fn create_pipeline(
+    device: &wgpu::Device,
+    layouts: &WgpuBindGroupLayouts,
+    surface_format: wgpu::TextureFormat,
+    shader_module: &wgpu::ShaderModule,
+) -> wgpu::RenderPipeline {
+    let mut bind_group_layouts = vec![
+        Some(&layouts.globals),
+        Some(&layouts.instances),
+        Some(&layouts.texture),
+    ];
+    crate::fast::rounded_clip::pipeline_layouts(&mut bind_group_layouts, layouts);
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("fast_layer_tiles_layout"),
+        bind_group_layouts: &bind_group_layouts,
+        immediate_size: 0,
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("fast_layer_tiles"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: shader_module,
+            entry_point: Some("vs_poly_sprite"),
+            buffers: &[],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader_module,
+            entry_point: Some("fs_layer_tile"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: surface_format,
+                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None,
+            polygon_mode: wgpu::PolygonMode::Fill,
+            unclipped_depth: false,
+            conservative: false,
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Greater),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
 
 /// The layer tiles `scene` composites, in the order it lists them.
 pub(crate) fn composited_tiles(scene: &Scene) -> impl Iterator<Item = (LayerKey, TileCoord)> + '_ {
@@ -43,6 +104,11 @@ pub(crate) fn composited_tiles(scene: &Scene) -> impl Iterator<Item = (LayerKey,
 /// Whether sprites of `texture` are layer tiles rather than atlas sprites.
 pub(crate) fn is_layer_texture(texture: AtlasTextureId) -> bool {
     decode_layer_tile(texture, TileId(0)).is_some()
+}
+
+/// Whether `texture` belongs to a layer cleared with a non-opaque background.
+pub(crate) fn is_premultiplied_layer(cache: &TileCache, texture: AtlasTextureId) -> bool {
+    decode_layer_tile(texture, TileId(0)).is_some_and(|(layer, _)| cache.is_premultiplied(layer))
 }
 
 /// Splits a batch of layer tile sprites into runs of the same tile: the

@@ -132,5 +132,11 @@ fn unbind_textures(target: &Target<'_>, frame: &mut FrameState) {
 /// The clear colour a tile over `background` starts from: the bytes an
 /// opaque quad of that colour writes to the frame's UNORM render target.
 pub(crate) fn clear_color(background: Rgba) -> [f32; 4] {
-    [background.r, background.g, background.b, background.a]
+    let alpha = background.a;
+    [
+        background.r * alpha,
+        background.g * alpha,
+        background.b * alpha,
+        alpha,
+    ]
 }

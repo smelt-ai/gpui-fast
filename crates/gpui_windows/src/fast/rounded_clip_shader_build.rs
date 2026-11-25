@@ -37,12 +37,34 @@ pub fn source(original: &str, alpha: &str) -> String {
         "    if (global_pad.x == 0u && is_opaque_rectangle(quad)) {\n        QuadFragmentInput culled",
         1,
     );
+    source.push_str(
+        r#"
+PolychromeSpriteFragmentInput layer_tile_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_InstanceID) {
+    return polychrome_sprite_vertex(vertex_id, instance_id);
+}
+
+float4 layer_tile_fragment(PolychromeSpriteFragmentInput input): SV_Target {
+    float4 color = t_sprite.Sample(s_sprite, input.tile_position);
+    if ((input.sprite_id & SIMPLE_PRIMITIVE_FLAG) != 0u) {
+        return color * input.opacity;
+    }
+
+    PolychromeSprite sprite = poly_sprites[input.sprite_id];
+    if (sprite.grayscale != 0u) {
+        color.rgb = dot(color.rgb, GRAYSCALE_FACTORS);
+    }
+    float distance = quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+    return color * (input.opacity * saturate(0.5 - distance));
+}
+"#,
+    );
     for name in [
         "quad_fragment",
         "shadow_fragment",
         "underline_fragment",
         "monochrome_sprite_fragment",
         "polychrome_sprite_fragment",
+        "layer_tile_fragment",
         "path_tile_fragment",
         "subpixel_sprite_fragment",
     ] {
@@ -73,13 +95,13 @@ pub fn source(original: &str, alpha: &str) -> String {
         } else {
             let mut result = String::new();
             let mut rest = body;
+            let premultiplied = name == "path_tile_fragment" || name == "layer_tile_fragment";
             while let Some(start) = rest.find("return ") {
                 let end = start + rest[start..].find(';').expect("fragment return semicolon");
                 result.push_str(&rest[..start]);
                 result.push_str(&format!(
-                    "return fast_clip_color({}, input.position.xy, {});",
+                    "return fast_clip_color({}, input.position.xy, {premultiplied});",
                     &rest[start + 7..end],
-                    name == "path_tile_fragment"
                 ));
                 rest = &rest[end + 1..];
             }

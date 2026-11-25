@@ -94,6 +94,7 @@ pub(crate) struct DirectXRenderPipelines {
     pub(crate) mono_sprites: PipelineState<MonochromeSprite>,
     pub(crate) subpixel_sprites: PipelineState<SubpixelSprite>,
     pub(crate) poly_sprites: PipelineState<PolychromeSprite>,
+    pub(crate) fast_layer_tiles: crate::fast::layers::composite::LayerTilePipeline,
 }
 
 pub(crate) struct DirectXGlobalElements {
@@ -1044,6 +1045,7 @@ impl DirectXRenderPipelines {
             16,
             create_blend_state(device)?,
         )?;
+        let fast_layer_tiles = crate::fast::layers::composite::LayerTilePipeline::new(device)?;
         let opaque_quad_pipeline = OpaqueQuadPipeline::new(device)?;
 
         Ok(Self {
@@ -1057,6 +1059,7 @@ impl DirectXRenderPipelines {
             mono_sprites,
             subpixel_sprites,
             poly_sprites,
+            fast_layer_tiles,
         })
     }
 }
@@ -1772,6 +1775,7 @@ pub(crate) mod shader_resources {
         MonochromeSprite,
         SubpixelSprite,
         PolychromeSprite,
+        LayerTile, // fast: premultiplied layer tiles
     }
 
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -1844,6 +1848,11 @@ pub(crate) mod shader_resources {
                 ShaderModule::PolychromeSprite => match target {
                     ShaderTarget::Vertex => POLYCHROME_SPRITE_VERTEX_BYTES,
                     ShaderTarget::Fragment => POLYCHROME_SPRITE_FRAGMENT_BYTES,
+                },
+                ShaderModule::LayerTile => match target {
+                    // fast: premultiplied layer tiles
+                    ShaderTarget::Vertex => LAYER_TILE_VERTEX_BYTES,
+                    ShaderTarget::Fragment => LAYER_TILE_FRAGMENT_BYTES,
                 },
             };
             Self { inner: bytes }
@@ -1926,6 +1935,7 @@ pub(crate) mod shader_resources {
                 ShaderModule::MonochromeSprite => "monochrome_sprite",
                 ShaderModule::SubpixelSprite => "subpixel_sprite",
                 ShaderModule::PolychromeSprite => "polychrome_sprite",
+                ShaderModule::LayerTile => "layer_tile", // fast: premultiplied layer tiles
             }
         }
     }

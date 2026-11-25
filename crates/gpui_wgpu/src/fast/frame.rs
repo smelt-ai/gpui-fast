@@ -939,6 +939,11 @@ pub(crate) fn draw_scene(
             PrimitiveBatch::PolychromeSprites { texture_id, range }
                 if composite::is_layer_texture(texture_id) =>
             {
+                let pipeline = if composite::is_premultiplied_layer(&state.layers, texture_id) {
+                    &pipelines.fast_layer_tiles
+                } else {
+                    &pipelines.poly_sprites
+                };
                 let sprites = &scene.polychrome_sprites;
                 for run in composite::tile_runs(sprites, range) {
                     let Some(view) = composite::texture_for_batch(
@@ -952,7 +957,7 @@ pub(crate) fn draw_scene(
                         &mut pass,
                         &mut bound,
                         scene_globals,
-                        &pipelines.poly_sprites,
+                        pipeline,
                         &upload.polychrome_sprites,
                         Some(&texture_bind_group("layer_tile_bind_group", view)),
                         run,

@@ -8,12 +8,52 @@
 
 use std::ops::Range;
 
+use anyhow::Result;
 use gpui::{
     AtlasTextureId, LayerKey, PolychromeSprite, Scene, TileCoord, TileId, decode_layer_tile,
 };
-use windows::Win32::Graphics::Direct3D11::ID3D11ShaderResourceView;
+use windows::Win32::Graphics::Direct3D11::{
+    D3D11_BLEND_DESC, D3D11_BLEND_INV_SRC_ALPHA, D3D11_BLEND_ONE, D3D11_BLEND_OP_ADD,
+    D3D11_COLOR_WRITE_ENABLE_ALL, ID3D11BlendState, ID3D11Device, ID3D11PixelShader,
+    ID3D11ShaderResourceView,
+};
 
+use crate::directx_renderer::shader_resources::{RawShaderBytes, ShaderModule, ShaderTarget};
 use crate::fast::layers::TileCache;
+
+pub(crate) struct LayerTilePipeline {
+    pub(crate) fragment: ID3D11PixelShader,
+    pub(crate) blend_state: ID3D11BlendState,
+}
+
+impl LayerTilePipeline {
+    pub(crate) fn new(device: &ID3D11Device) -> Result<Self> {
+        let raw_shader = RawShaderBytes::new(ShaderModule::LayerTile, ShaderTarget::Fragment)?;
+        let fragment = unsafe {
+            let mut shader = None;
+            device.CreatePixelShader(raw_shader.as_bytes(), None, Some(&mut shader))?;
+            shader.unwrap()
+        };
+        let mut desc = D3D11_BLEND_DESC::default();
+        desc.RenderTarget[0].BlendEnable = true.into();
+        desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+        desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+        desc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
+        desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+        desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+        desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+        desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
+        let blend_state = unsafe {
+            let mut state = None;
+            device.CreateBlendState(&desc, Some(&mut state))?;
+            state.unwrap()
+        };
+        Ok(Self {
+            fragment,
+            blend_state,
+        })
+    }
+}
 
 /// The layer tiles `scene` composites, in the order it lists them.
 pub(crate) fn composited_tiles(scene: &Scene) -> impl Iterator<Item = (LayerKey, TileCoord)> + '_ {
@@ -44,6 +84,11 @@ pub(crate) fn composited_tiles(scene: &Scene) -> impl Iterator<Item = (LayerKey,
 /// Whether sprites of `texture` are layer tiles rather than atlas sprites.
 pub(crate) fn is_layer_texture(texture: AtlasTextureId) -> bool {
     decode_layer_tile(texture, TileId(0)).is_some()
+}
+
+/// Whether `texture` belongs to a layer cleared with a non-opaque background.
+pub(crate) fn is_premultiplied_layer(cache: &TileCache, texture: AtlasTextureId) -> bool {
+    decode_layer_tile(texture, TileId(0)).is_some_and(|(layer, _)| cache.is_premultiplied(layer))
 }
 
 /// Splits a batch of layer tile sprites into runs of the same tile: the

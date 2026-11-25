@@ -37,11 +37,12 @@ pub(crate) fn plan(layers: &SceneLayers, planned: &[(usize, TileCoord)]) -> Vec<
 /// The clear colour a tile over `background` starts from: the bytes an
 /// opaque quad of that colour writes to the frame's non-sRGB texture.
 pub(crate) fn clear_color(background: Rgba) -> wgpu::Color {
+    let alpha = background.a as f64;
     wgpu::Color {
-        r: background.r as f64,
-        g: background.g as f64,
-        b: background.b as f64,
-        a: background.a as f64,
+        r: background.r as f64 * alpha,
+        g: background.g as f64 * alpha,
+        b: background.b as f64 * alpha,
+        a: alpha,
     }
 }
 

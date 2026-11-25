@@ -62,6 +62,23 @@ impl DrawState {
         pipeline: &PipelineState<T>,
         topology: D3D_PRIMITIVE_TOPOLOGY,
     ) {
+        self.set_pipeline_with_overrides(
+            device_context,
+            pipeline,
+            &pipeline.fragment,
+            &pipeline.blend_state,
+            topology,
+        );
+    }
+
+    pub(crate) fn set_pipeline_with_overrides<T>(
+        &mut self,
+        device_context: &ID3D11DeviceContext,
+        pipeline: &PipelineState<T>,
+        fragment: &ID3D11PixelShader,
+        blend_state: &ID3D11BlendState,
+        topology: D3D_PRIMITIVE_TOPOLOGY,
+    ) {
         unsafe {
             if self.instances.as_ref() != Some(&pipeline.instances.view) {
                 let view = std::slice::from_ref(&pipeline.instances.view);
@@ -77,13 +94,13 @@ impl DrawState {
                 device_context.VSSetShader(&pipeline.vertex, None);
                 self.vertex = Some(pipeline.vertex.clone());
             }
-            if self.fragment.as_ref() != Some(&pipeline.fragment) {
-                device_context.PSSetShader(&pipeline.fragment, None);
-                self.fragment = Some(pipeline.fragment.clone());
+            if self.fragment.as_ref() != Some(fragment) {
+                device_context.PSSetShader(fragment, None);
+                self.fragment = Some(fragment.clone());
             }
-            if self.blend_state.as_ref() != Some(&pipeline.blend_state) {
-                device_context.OMSetBlendState(&pipeline.blend_state, None, 0xFFFFFFFF);
-                self.blend_state = Some(pipeline.blend_state.clone());
+            if self.blend_state.as_ref() != Some(blend_state) {
+                device_context.OMSetBlendState(blend_state, None, 0xFFFFFFFF);
+                self.blend_state = Some(blend_state.clone());
             }
             if self.depth_stencil_state.as_ref() != Some(&pipeline.depth_stencil_state) {
                 device_context.OMSetDepthStencilState(&pipeline.depth_stencil_state, 0);

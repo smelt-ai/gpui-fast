@@ -3,12 +3,40 @@
 
 pub fn source(source: &str) -> String {
     let mut source = source.to_owned();
+    source.push_str(
+        r#"
+fragment float4 layer_tile_fragment(
+    PolychromeSpriteFragmentInput input [[stage_in]],
+    constant PolychromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
+    texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]]) {
+  constexpr sampler atlas_texture_sampler(mag_filter::linear,
+                                          min_filter::linear);
+  float4 color =
+      atlas_texture.sample(atlas_texture_sampler, input.tile_position);
+  if ((input.sprite_id & SIMPLE_PRIMITIVE_FLAG) != 0u) {
+    return color * input.opacity;
+  }
+
+  PolychromeSprite sprite = sprites[input.sprite_id];
+  if (sprite.grayscale) {
+    float grayscale = 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
+    color.r = grayscale;
+    color.g = grayscale;
+    color.b = grayscale;
+  }
+  float distance =
+      quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
+  return color * (input.opacity * saturate(0.5 - distance));
+}
+"#,
+    );
     for name in [
         "quad_fragment",
         "shadow_fragment",
         "underline_fragment",
         "monochrome_sprite_fragment",
         "polychrome_sprite_fragment",
+        "layer_tile_fragment",
         "path_tile_fragment",
         "surface_fragment",
         "native_view_fragment",
@@ -32,7 +60,7 @@ pub fn source(source: &str) -> String {
             }
         }
         let body = &source[body_start + 1..body_end];
-        let body = mask_returns(body);
+        let body = mask_returns(body, name == "layer_tile_fragment");
         source.replace_range(body_start + 1..body_end, &body);
         source.insert_str(signature_end, ", constant FastRoundedClip *fast_clip_shapes [[buffer(28)]], constant uint &fast_clip_enabled [[buffer(29)]]");
     }
@@ -82,7 +110,7 @@ pub fn stage(input: impl AsRef<std::path::Path>, output: impl AsRef<std::path::P
     std::fs::write(output, source(&std::fs::read_to_string(input).unwrap())).unwrap();
 }
 
-fn mask_returns(body: &str) -> String {
+fn mask_returns(body: &str, premultiplied: bool) -> String {
     let mut result = String::new();
     let mut remaining = body;
     while let Some(start) = remaining.find("return ") {
@@ -91,7 +119,10 @@ fn mask_returns(body: &str) -> String {
                 .find(';')
                 .expect("fragment return semicolon");
         result.push_str(&remaining[..start]);
-        result.push_str(&format!("return fast_rounded_clip_color({}, input.position.xy, fast_clip_shapes, fast_clip_enabled, false);", &remaining[start + 7..end]));
+        result.push_str(&format!(
+            "return fast_rounded_clip_color({}, input.position.xy, fast_clip_shapes, fast_clip_enabled, {premultiplied});",
+            &remaining[start + 7..end]
+        ));
         remaining = &remaining[end + 1..];
     }
     result.push_str(remaining);

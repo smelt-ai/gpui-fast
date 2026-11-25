@@ -8,11 +8,32 @@
 
 use std::{mem, ops::Range, ptr};
 
+use anyhow::Result;
 use gpui::{AtlasTextureId, DevicePixels, TileId, decode_layer_tile, size};
-use objc2::runtime::ProtocolObject;
-use objc2_metal::{MTLPrimitiveType, MTLRenderCommandEncoder, MTLTexture};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+use objc2_metal::{
+    MTLDevice, MTLLibrary, MTLPixelFormat, MTLPrimitiveType, MTLRenderCommandEncoder,
+    MTLRenderPipelineState, MTLTexture,
+};
 
-use crate::metal_renderer::{InstanceBindings, MetalRenderer, SpriteInputIndex};
+use crate::metal_renderer::{
+    InstanceBindings, MetalRenderer, SpriteInputIndex, build_pipeline_state,
+};
+
+pub(crate) fn build_pipeline(
+    device: &ProtocolObject<dyn MTLDevice>,
+    library: &ProtocolObject<dyn MTLLibrary>,
+) -> Result<Retained<ProtocolObject<dyn MTLRenderPipelineState>>> {
+    build_pipeline_state(
+        device,
+        library,
+        "layer_tiles",
+        "polychrome_sprite_vertex",
+        "layer_tile_fragment",
+        MTLPixelFormat::BGRA8Unorm,
+        true,
+    )
+}
 
 /// Forwarded to by `MetalRenderer::draw_polychrome_sprites`. Draws the batch
 /// `sprites` if its texture is a layer's tiles, and returns whether it was:
@@ -38,7 +59,12 @@ pub(crate) fn draw_tiles(
         };
         if !pipeline_set {
             pipeline_set = true;
-            command_encoder.setRenderPipelineState(&renderer.polychrome_sprites_pipeline_state);
+            let pipeline = if cache.is_premultiplied(layer) {
+                &renderer.fast_layer_tiles_pipeline_state
+            } else {
+                &renderer.polychrome_sprites_pipeline_state
+            };
+            command_encoder.setRenderPipelineState(pipeline);
             // SAFETY: Both shader stages read the scene's polychrome sprites
             // from this instance binding. Metal retains the buffer for the draw.
             unsafe {

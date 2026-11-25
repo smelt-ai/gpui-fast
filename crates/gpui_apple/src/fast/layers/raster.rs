@@ -68,11 +68,12 @@ fn composited_tiles(scene: &Scene) -> impl Iterator<Item = (LayerKey, TileCoord)
 /// The clear colour a tile over `background` starts from: the bytes an
 /// opaque quad of that colour writes to the frame's non-sRGB texture.
 pub(crate) fn clear_color(background: Rgba) -> MTLClearColor {
+    let alpha = background.a as f64;
     MTLClearColor {
-        red: background.r as f64,
-        green: background.g as f64,
-        blue: background.b as f64,
-        alpha: background.a as f64,
+        red: background.r as f64 * alpha,
+        green: background.g as f64 * alpha,
+        blue: background.b as f64 * alpha,
+        alpha,
     }
 }
 

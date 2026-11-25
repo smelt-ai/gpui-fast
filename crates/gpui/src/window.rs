@@ -3743,7 +3743,7 @@ impl Window {
 
     /// Floors the near edge and ceils the far edge, producing a strict superset of the raw region.
     #[inline]
-    fn cover_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
+    pub(crate) fn cover_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
         let scale_factor = self.scale_factor();
         let left = floor_to_device_pixel(bounds.left().0, scale_factor);
         let top = floor_to_device_pixel(bounds.top().0, scale_factor);
@@ -5028,6 +5028,26 @@ impl Window {
         let clipped = bounds.intersect(&self.content_mask().bounds);
         let cover = (!clipped.is_empty()).then(|| self.cover_bounds(clipped));
         crate::fast::layers::paint_layer(self, cover, f)
+    }
+
+    /// Paints or reuses a caller-managed GPU tile-cached layer keyed by `id`
+    /// and `revision` over `bounds`.
+    pub fn paint_cached_layer<R>(
+        &mut self,
+        id: crate::CachedLayerId,
+        bounds: Bounds<Pixels>,
+        revision: u64,
+        options: crate::CachedLayerOptions,
+        paint: impl FnOnce(&mut Self) -> R,
+    ) -> Option<R> {
+        self.invalidator.debug_assert_paint();
+        crate::fast::layers::cached::paint_cached_layer(self, id, bounds, revision, options, paint)
+    }
+
+    /// Drops the cached layer `id`, releasing its retained scene and stopping
+    /// tile emission so GPU tile textures expire cleanly.
+    pub fn remove_cached_layer(&mut self, id: crate::CachedLayerId) {
+        crate::fast::layers::cached::remove_cached_layer(self, id);
     }
 
     /// Paint the drop (non-inset) shadows from `shadows` into the scene at the current
