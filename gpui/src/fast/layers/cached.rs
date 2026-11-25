@@ -229,9 +229,11 @@ pub(crate) fn paint_cached_layer<R>(
                 } else {
                     Vec::new()
                 };
-            } else {
-                record.dirty_tiles.clear();
             }
+            // The same generation keeps its dirty tiles: the renderer may not
+            // have rendered the frame that made it (no drawable in the
+            // background), and the tile cache ignores them for a generation
+            // it has seen. Scroll layers keep theirs the same way.
         }
         emit_cached_layer(window, id, clipped, target_translation);
         return None;
@@ -289,12 +291,14 @@ pub(crate) fn paint_cached_layer<R>(
         })
         .map(|old| {
             let dirty = dirty_tiles(&old.tile_hashes, &hashes);
-            (old.generation, dirty)
+            (old.generation, dirty, old.dirty_tiles.clone())
         });
 
     let (generation, dirty_tiles) = match reused_generation {
-        Some((generation, dirty)) if dirty.is_empty() => (generation, Vec::new()),
-        Some((_, dirty)) => {
+        // The same content: the same generation, with the dirty tiles it was
+        // made with (see the revision hit above).
+        Some((generation, dirty, kept)) if dirty.is_empty() => (generation, kept),
+        Some((_, dirty, _)) => {
             layer.generation += 1;
             (layer.generation, dirty)
         }
