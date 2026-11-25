@@ -73,9 +73,16 @@ pub(crate) struct WindowLayers {
 
 impl WindowLayers {
     pub(crate) fn alloc_key(&mut self) -> scene::LayerKey {
-        let key = scene::LayerKey(self.next_key % scene::LAYER_KEY_LIMIT);
-        self.next_key = (self.next_key + 1) % scene::LAYER_KEY_LIMIT;
-        key
+        for _ in 0..scene::LAYER_KEY_LIMIT {
+            let key = scene::LayerKey(self.next_key % scene::LAYER_KEY_LIMIT);
+            self.next_key = (self.next_key + 1) % scene::LAYER_KEY_LIMIT;
+            let in_use = self.layers.values().any(|layer| layer.key == key)
+                || self.cached.entries.values().any(|layer| layer.key == key);
+            if !in_use {
+                return key;
+            }
+        }
+        panic!("layer key space exhausted")
     }
 }
 

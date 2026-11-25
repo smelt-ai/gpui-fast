@@ -5033,6 +5033,26 @@ impl Window {
 
     /// Paints or reuses a caller-managed GPU tile-cached layer keyed by `id`
     /// and `revision` over `bounds`.
+    ///
+    /// Returns `Some(R)` when `paint` was invoked (on cache miss due to first
+    /// paint or revision, `bounds.size`, or scale-factor change, or when
+    /// caching is unavailable such as disabled layers or nested layer captures).
+    /// Returns `None` when cached content was reused **or** when `bounds` is
+    /// empty or completely clipped away by the active content mask.
+    ///
+    /// Changing only `bounds.origin` or [`CachedLayerOptions::offset`] while
+    /// keeping `revision`, `bounds.size`, and scale factor unchanged shifts the
+    /// cached tiles in window space without re-running `paint` or
+    /// re-rasterizing GPU tiles.
+    ///
+    /// Calls nested inside another `paint_cached_layer` or scroll layer fall
+    /// back to direct `paint(window)` execution without creating a separate
+    /// cache entry.
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds if called outside the paint phase of element
+    /// drawing.
     pub fn paint_cached_layer<R>(
         &mut self,
         id: crate::CachedLayerId,
@@ -5045,8 +5065,10 @@ impl Window {
         crate::fast::layers::cached::paint_cached_layer(self, id, bounds, revision, options, paint)
     }
 
-    /// Drops the cached layer `id`, releasing its retained scene and stopping
-    /// tile emission so GPU tile textures expire cleanly.
+    /// Immediately drops the cached layer `id`, releasing its retained scene
+    /// and stopping tile emission so GPU tile textures expire cleanly.
+    ///
+    /// Calling this with an unknown `id` is a no-op.
     pub fn remove_cached_layer(&mut self, id: crate::CachedLayerId) {
         crate::fast::layers::cached::remove_cached_layer(self, id);
     }

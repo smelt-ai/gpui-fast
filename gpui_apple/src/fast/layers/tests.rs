@@ -1146,7 +1146,7 @@ fn cached_layer_opaque_matches_direct_and_skips_hit_rasterization(cx: &mut gpui:
                         |_, _, _| (),
                         move |bounds, (), window, _| {
                             window.paint_cached_layer(
-                                CachedLayerId(1),
+                                CachedLayerId::new(1),
                                 bounds,
                                 1,
                                 CachedLayerOptions::default().background(gpui::white()),
@@ -1338,7 +1338,7 @@ fn cached_layer_transparent_inside_fast_rounded_clip_matches_direct(cx: &mut gpu
                             };
                             if cached {
                                 window.paint_cached_layer(
-                                    CachedLayerId(99),
+                                    CachedLayerId::new(99),
                                     bounds,
                                     1,
                                     CachedLayerOptions::default().background(Rgba {
@@ -1444,7 +1444,7 @@ fn cached_layer_multi_tile_partial_update_rasterizes_only_dirty_tile(
                         |_, _, _| (),
                         move |bounds, (), window, _| {
                             window.paint_cached_layer(
-                                CachedLayerId(77),
+                                CachedLayerId::new(77),
                                 bounds,
                                 r,
                                 CachedLayerOptions::default().background(gpui::white()),
