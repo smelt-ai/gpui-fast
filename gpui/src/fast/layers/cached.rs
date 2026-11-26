@@ -393,10 +393,13 @@ fn emit_cached_layer(
         return;
     };
 
-    let viewports = viewports(window);
     window
         .content_mask_stack
         .push(ContentMask { bounds: clipped });
+    // The content was captured clipped to the layer's bounds, so its tiles
+    // composite over those alone: past them, a tile shows its background,
+    // or what the layer painted there before it was painted again smaller.
+    let viewports = viewports(window);
     if !record.tiled {
         let content = record.content.clone();
         let overlay = record.overlay.clone();

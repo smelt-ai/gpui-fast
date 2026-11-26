@@ -312,7 +312,10 @@ fn cached_layer_translation_and_offset_without_repaint(cx: &mut crate::TestAppCo
                 .scene
                 .polychrome_sprites
                 .iter()
-                .find(|s| decode_layer_tile(s.tile.texture_id, s.tile.tile_id).is_some())
+                .find(|s| {
+                    decode_layer_tile(s.tile.texture_id, s.tile.tile_id)
+                        .is_some_and(|(_, tile)| tile == TileCoord { x: 0, y: 0 })
+                })
                 .unwrap();
             (frame.generation, sprite.bounds.origin)
         })
@@ -336,7 +339,10 @@ fn cached_layer_translation_and_offset_without_repaint(cx: &mut crate::TestAppCo
                 .scene
                 .polychrome_sprites
                 .iter()
-                .find(|s| decode_layer_tile(s.tile.texture_id, s.tile.tile_id).is_some())
+                .find(|s| {
+                    decode_layer_tile(s.tile.texture_id, s.tile.tile_id)
+                        .is_some_and(|(_, tile)| tile == TileCoord { x: 0, y: 0 })
+                })
                 .unwrap();
             sprite.bounds.origin
         })
@@ -368,7 +374,10 @@ fn cached_layer_translation_and_offset_without_repaint(cx: &mut crate::TestAppCo
                 .scene
                 .polychrome_sprites
                 .iter()
-                .find(|s| decode_layer_tile(s.tile.texture_id, s.tile.tile_id).is_some())
+                .find(|s| {
+                    decode_layer_tile(s.tile.texture_id, s.tile.tile_id)
+                        .is_some_and(|(_, tile)| tile == TileCoord { x: 0, y: 0 })
+                })
                 .unwrap();
             sprite.bounds.origin
         })
