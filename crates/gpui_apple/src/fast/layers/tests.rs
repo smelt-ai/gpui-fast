@@ -1577,5 +1577,114 @@ fn cached_layer_repainted_in_an_unrendered_frame_shows_its_new_content(
     }
 }
 
+/// A cached layer painted again over smaller bounds shows nothing outside
+/// them. The tiles it no longer covers still hold what it painted there
+/// before: a table scrolled sideways showed its copy from before the scroll
+/// under the new one, cut at a tile edge.
+#[gpui::test]
+fn cached_layer_painted_again_over_smaller_bounds_shows_nothing_outside_them(
+    cx: &mut gpui::TestAppContext,
+) {
+    use gpui::{
+        CachedLayerId, CachedLayerOptions, IntoElement as _, ParentElement as _, Styled as _,
+        canvas, div, fill,
+    };
+    use std::cell::Cell;
+
+    let logical_size = size(px(200.), px(600.));
+    let rect = |window: &mut gpui::Window,
+                origin: gpui::Point<gpui::Pixels>,
+                top: f32,
+                height: f32,
+                color: Hsla| {
+        window.paint_quad(fill(
+            Bounds::new(origin + point(px(20.), px(top)), size(px(160.), px(height))),
+            color,
+        ));
+    };
+    // Drawn under the layer, the band leaves no solid colour to bake under
+    // it: its tiles are transparent, as over a window's backdrop image.
+    let band = move |window: &mut gpui::Window, bounds: Bounds<gpui::Pixels>| {
+        window.paint_quad(fill(
+            Bounds::new(
+                bounds.origin + point(px(0.), px(50.)),
+                size(bounds.size.width, px(550.)),
+            ),
+            gpui::hsla(0., 0., 0.5, 1.),
+        ));
+    };
+
+    let mut harness = Harness::new().expect("Metal device required");
+    let (_, expected, size_dp) =
+        render_window_fixture(cx, &mut harness, logical_size, move |_, _| {
+            div()
+                .size_full()
+                .bg(gpui::white())
+                .child(
+                    canvas(
+                        |_, _, _| (),
+                        move |bounds, (), window, _| {
+                            band(window, bounds);
+                            rect(window, bounds.origin, 20., 40., Hsla::blue());
+                        },
+                    )
+                    .size_full(),
+                )
+                .into_any_element()
+        });
+
+    // First the whole height with a block at the bottom, a tile row below
+    // the top one, then only the top 100 px with a block in them.
+    let tall = Rc::new(Cell::new(true));
+    let tall_ref = tall.clone();
+    let mut harness = Harness::new().expect("Metal device required");
+    let (handle, _, _) = render_window_fixture(cx, &mut harness, logical_size, move |_, _| {
+        let tall = tall_ref.get();
+        div()
+            .size_full()
+            .bg(gpui::white())
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |bounds, (), window, _| {
+                        band(window, bounds);
+                        let layer = if tall {
+                            bounds
+                        } else {
+                            Bounds::new(bounds.origin, size(bounds.size.width, px(100.)))
+                        };
+                        window.paint_cached_layer(
+                            CachedLayerId::new(9),
+                            layer,
+                            if tall { 1 } else { 2 },
+                            CachedLayerOptions::default(),
+                            |window| {
+                                if tall {
+                                    rect(window, bounds.origin, 540., 50., Hsla::blue());
+                                } else {
+                                    rect(window, bounds.origin, 20., 40., Hsla::blue());
+                                }
+                            },
+                        );
+                    },
+                )
+                .size_full(),
+            )
+            .into_any_element()
+    });
+    tall.set(false);
+    let actual = redraw_window_fixture(cx, handle, &mut harness, size_dp);
+
+    let width = size_dp.width.0 as usize;
+    let scale = size_dp.width.0 as f32 / 200.;
+    let (x, y) = ((100. * scale) as usize, (565. * scale) as usize);
+    assert_eq!(
+        pixel(&actual, width, x, y),
+        pixel(&expected, width, x, y),
+        "the block painted before the layer shrank still shows below it"
+    );
+    assert_pixels_within(&actual, &expected, width, 2);
+}
+
 #[path = "../../../../gpui_linux/src/fast/composition/occluders.rs"]
 mod x11_occluder_tests;
